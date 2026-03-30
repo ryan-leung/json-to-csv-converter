@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JSON to CSV Converter</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            border: 1px solid #ddd;
+            padding: 20px;
+            border-radius: 5px;
+            background-color: #f9f9f9;
+        }
+        .drop-area {
+            border: 2px dashed #ccc;
+            padding: 40px;
+            text-align: center;
+            margin-bottom: 20px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .drop-area:hover {
+            background-color: #f0f0f0;
+        }
+        .drop-area.highlight {
+            border-color: #4CAF50;
+            background-color: #e8f5e9;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        #progress-container {
+            display: none;
+            margin-top: 20px;
+        }
+        #progress-bar {
+            width: 100%;
+            background-color: #ddd;
+            border-radius: 4px;
+        }
+        #progress {
+            width: 0%;
+            height: 20px;
+            background-color: #4CAF50;
+            border-radius: 4px;
+            text-align: center;
+            line-height: 20px;
+            color: white;
+        }
+        #status {
+            margin-top: 10px;
+            font-style: italic;
+            color: #666;
+        }
+        #options {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #eee;
+            border-radius: 4px;
+        }
+        .option-group {
+            margin-bottom: 10px;
+        }
+        label {
+            display: inline-block;
+            width: 150px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>JSON to CSV Converter</h1>
+        <p>Convert large JSON files to CSV format directly in your browser</p>
+        
+        <div class="drop-area" id="dropArea">
+            <p>Drag & drop JSON file here or click to browse</p>
+            <input type="file" id="fileInput" accept=".json" style="display: none;">
+            <p id="fileInfo">No file selected</p>
+        </div>
+        
+        <div id="options">
+            <div class="option-group">
+                <label for="delimiter">Delimiter:</label>
+                <select id="delimiter">
+                    <option value=",">Comma (,)</option>
+                    <option value=";">Semicolon (;)</option>
+                    <option value="\t">Tab (\t)</option>
+                    <option value="|">Pipe (|)</option>
+                </select>
+            </div>
+            <div class="option-group">
+                <label for="includeHeaders">Headers:</label>
+                <input type="checkbox" id="includeHeaders" checked> Include header row
+            </div>
+            <div class="option-group">
+                <label for="flattenObjects">Flatten:</label>
+                <input type="checkbox" id="flattenObjects"> Flatten nested objects
+            </div>
+        </div>
+        
+        <button id="convertBtn" disabled>Convert to CSV</button>
+        
+        <div id="progress-container">
+            <div id="progress-bar">
+                <div id="progress">0%</div>
+            </div>
+            <div id="status">Ready</div>
+        </div>
+        
+        <div id="result" style="margin-top: 20px; display: none;">
+            <h3>Conversion Complete!</h3>
+            <button id="downloadBtn">Download CSV</button>
+        </div>
+    </div>
+    
+    <script>
+        // DOM elements
+        const dropArea = document.getElementById('dropArea');
+        const fileInput = document.getElementById('fileInput');
+        const fileInfo = document.getElementById('fileInfo');
+        const convertBtn = document.getElementById('convertBtn');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const progressContainer = document.getElementById('progress-container');
+        const progressBar = document.getElementById('progress');
+        const statusText = document.getElementById('status');
+        const resultDiv = document.getElementById('result');
+        
+        let selectedFile = null;
+        let worker = null;
+        
+        // File selection handlers
+        dropArea.addEventListener('click', () => fileInput.click());
+        
+        dropArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropArea.classList.add('highlight');
+        });
+        
+        dropArea.addEventListener('dragleave', () => {
+            dropArea.classList.remove('highlight');
+        });
+        
+        dropArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropArea.classList.remove('highlight');
+            
+            if (e.dataTransfer.files.length) {
+                handleFile(e.dataTransfer.files[0]);
+            }
+        });
+        
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length) {
+                handleFile(e.target.files[0]);
+            }
+        });
+        
+        function handleFile(file) {
+            if (file.type !== 'application/json' && !file.name.endsWith('.json')) {
+                alert('Please select a JSON file');
+                return;
+            }
+            
+            selectedFile = file;
+            fileInfo.textContent = `${file.name} (${formatFileSize(file.size)})`;
+            convertBtn.disabled = false;
+        }
+        
+        function formatFileSize(bytes) {
+            if (bytes < 1024) return bytes + ' bytes';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+        }
+        
+        // Conversion process
+        convertBtn.addEventListener('click', startConversion);
+        
+        function startConversion() {
+            if (!selectedFile) return;
+            
+            convertBtn.disabled = true;
+            progressContainer.style.display = 'block';
+            resultDiv.style.display = 'none';
+            statusText.textContent = 'Initializing...';
+            progressBar.style.width = '0%';
+            progressBar.textContent = '0%';
+            
+            // Get conversion options
+            const options = {
+                delimiter: document.getElementById('delimiter').value,
+                includeHeaders: document.getElementById('includeHeaders').checked,
+                flattenObjects: document.getElementById('flattenObjects').checked
+            };
+            
+            // Use web worker for large files to avoid UI freezing
+            if (selectedFile.size > 10 * 1024 * 1024) { // >10MB
+                useWebWorker(selectedFile, options);
+            } else {
+                convertDirectly(selectedFile, options);
+            }
+        }
+        
+        function useWebWorker(file, options) {
+            statusText.textContent = 'Setting up worker...';
+            
+            // Create worker from blob
+            const workerCode = `
+                self.onmessage = function(e) {
+                    const {file, options, chunkSize} = e.data;
+                    const reader = new FileReader();
+                    let position = 0;
+                    let csvData = '';
+                    let firstChunk = true;
+                    let headers = null;
+                    
+                    function processChunk() {
+                        if (position >= file.size) {
+                            self.postMessage({type: 'complete', csv: csvData});
+                            return;
+                        }
+                        
+                        const end = Math.min(position + chunkSize, file.size);
+                        const chunk = file.slice(position, end);
+                        
+                        reader.onload = function(e) {
+                            try {
+                                const chunkData = e.target.result;
+                                const jsonData = JSON.parse(chunkData);
+                                
+                                if (firstChunk) {
+                                    // Extract headers from first chunk
+                                    if (Array.isArray(jsonData)) {
+                                        if (jsonData.length > 0) {
+                                            headers = options.includeHeaders ? Object.keys(jsonData[0]) : [];
+                                            csvData += headers.join(options.delimiter) + '\\n';
+                                        }
+                                    } else {
+                                        headers = options.includeHeaders ? Object.keys(jsonData) : [];
+                                        csvData += headers.join(options.delimiter) + '\\n';
+                                    }
+                                    firstChunk = false;
+                                }
+                                
+                                // Convert JSON to CSV
+                                if (Array.isArray(jsonData)) {
+                                    jsonData.forEach(item => {
+                                        const row = headers.map(header => {
+                                            let value = item[header];
+                                            if (value === undefined || value === null) return '';
+                                            if (typeof value === 'object') {
+                                                if (options.flattenObjects) {
+                                                    return JSON.stringify(value).replace(/\"/g, '""');
+                                                }
+                                                return JSON.stringify(value);
+                                            }
+                                            return String(value).replace(/\"/g, '""');
+                                        });
+                                        csvData += row.join(options.delimiter) + '\\n';
+                                    });
+                                } else {
+                                    const row = headers.map(header => {
+                                        let value = jsonData[header];
+                                        if (value === undefined || value === null) return '';
+                                        if (typeof value === 'object') {
+                                            if (options.flattenObjects) {
+                                                return JSON.stringify(value).replace(/\"/g, '""');
+                                            }
+                                            return JSON.stringify(value);
+                                        }
+                                        return String(value).replace(/\"/g, '""');
+                                    });
+                                    csvData += row.join(options.delimiter) + '\\n';
+                                }
+                                
+                                position = end;
+                                const progress = Math.min(100, Math.round((position / file.size) * 100));
+                                self.postMessage({type: 'progress', progress, position, total: file.size});
+                                
+                                processChunk();
+                            } catch (error) {
+                                self.postMessage({type: 'error', error: error.message});
+                            }
+                        };
+                        
+                        reader.readAsText(chunk);
+                    }
+                    
+                    processChunk();
+                };
+            `;
+            
+            const blob = new Blob([workerCode], {type: 'application/javascript'});
+            worker = new Worker(URL.createObjectURL(blob));
+            
+            worker.onmessage = function(e) {
+                if (e.data.type === 'progress') {
+                    const progress = e.data.progress;
+                    progressBar.style.width = progress + '%';
+                    progressBar.textContent = progress + '%';
+                    statusText.textContent = `Processing: ${formatFileSize(e.data.position)} of ${formatFileSize(e.data.total)}`;
+                } else if (e.data.type === 'complete') {
+                    cleanupWorker();
+                    const csvBlob = new Blob([e.data.csv], {type: 'text/csv'});
+                    showDownloadButton(csvBlob);
+                } else if (e.data.type === 'error') {
+                    cleanupWorker();
+                    alert('Error: ' + e.data.error);
+                    resetUI();
+                }
+            };
+            
+            worker.onerror = function(error) {
+                cleanupWorker();
+                alert('Worker error: ' + error.message);
+                resetUI();
+            };
+            
+            // Start worker with file and options
+            worker.postMessage({
+                file: selectedFile,
+                options: options,
+                chunkSize: 10 * 1024 * 1024 // 10MB chunks
+            });
+        }
+        
+        function convertDirectly(file, options) {
+            statusText.textContent = 'Reading file...';
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    statusText.textContent = 'Parsing JSON...';
+                    const jsonData = JSON.parse(e.target.result);
+                    
+                    statusText.textContent = 'Converting to CSV...';
+                    const csv = jsonToCsv(jsonData, options);
+                    
+                    const csvBlob = new Blob([csv], {type: 'text/csv'});
+                    showDownloadButton(csvBlob);
+                } catch (error) {
+                    alert('Error: ' + error.message);
+                    resetUI();
+                }
+            };
+            
+            reader.onprogress = function(e) {
+                if (e.lengthComputable) {
+                    const progress = Math.round((e.loaded / e.total) * 100);
+                    progressBar.style.width = progress + '%';
+                    progressBar.textContent = progress + '%';
+                }
+            };
+            
+            reader.readAsText(file);
+        }
+        
+        function jsonToCsv(jsonData, options) {
+            let csv = '';
+            let headers = [];
+            
+            // Extract headers
+            if (Array.isArray(jsonData)) {
+                if (jsonData.length > 0) {
+                    headers = options.includeHeaders ? Object.keys(jsonData[0]) : [];
+                    if (options.includeHeaders) {
+                        csv += headers.join(options.delimiter) + '\n';
+                    }
+                }
+            } else {
+                headers = options.includeHeaders ? Object.keys(jsonData) : [];
+                if (options.includeHeaders) {
+                    csv += headers.join(options.delimiter) + '\n';
+                }
+            }
+            
+            // Convert data to CSV rows
+            if (Array.isArray(jsonData)) {
+                jsonData.forEach(item => {
+                    const row = headers.map(header => {
+                        let value = item[header];
+                        if (value === undefined || value === null) return '';
+                        if (typeof value === 'object') {
+                            if (options.flattenObjects) {
+                                return JSON.stringify(value).replace(/"/g, '""');
+                            }
+                            return JSON.stringify(value);
+                        }
+                        return String(value).replace(/"/g, '""');
+                    });
+                    csv += row.join(options.delimiter) + '\n';
+                });
+            } else {
+                const row = headers.map(header => {
+                    let value = jsonData[header];
+                    if (value === undefined || value === null) return '';
+                    if (typeof value === 'object') {
+                        if (options.flattenObjects) {
+                            return JSON.stringify(value).replace(/"/g, '""');
+                        }
+                        return JSON.stringify(value);
+                    }
+                    return String(value).replace(/"/g, '""');
+                });
+                csv += row.join(options.delimiter) + '\n';
+            }
+            
+            return csv;
+        }
+        
+        function showDownloadButton(csvBlob) {
+            progressBar.style.width = '100%';
+            progressBar.textContent = '100%';
+            statusText.textContent = 'Conversion complete!';
+            
+            resultDiv.style.display = 'block';
+            
+            downloadBtn.onclick = function() {
+                const url = URL.createObjectURL(csvBlob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = selectedFile.name.replace('.json', '.csv') || 'converted.csv';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            };
+        }
+        
+        function cleanupWorker() {
+            if (worker) {
+                worker.terminate();
+                worker = null;
+            }
+        }
+        
+        function resetUI() {
+            convertBtn.disabled = false;
+            progressContainer.style.display = 'none';
+            statusText.textContent = 'Error occurred';
+        }
+        
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', cleanupWorker);
+    </script>
+</body>
+</html>
