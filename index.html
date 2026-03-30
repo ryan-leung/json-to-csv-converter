@@ -97,6 +97,11 @@
             <p id="fileInfo">No file selected</p>
         </div>
         
+        <div style="margin: 20px 0;">
+            <label for="jsonText">Or paste JSON directly:</label>
+            <textarea id="jsonText" rows="10" cols="80" placeholder="Paste your JSON data here..." style="width: 100%; padding: 10px; font-family: monospace;"></textarea>
+        </div>
+        
         <div id="options">
             <div class="option-group">
                 <label for="delimiter">Delimiter:</label>
@@ -137,6 +142,7 @@
         const dropArea = document.getElementById('dropArea');
         const fileInput = document.getElementById('fileInput');
         const fileInfo = document.getElementById('fileInfo');
+        const jsonText = document.getElementById('jsonText');
         const convertBtn = document.getElementById('convertBtn');
         const downloadBtn = document.getElementById('downloadBtn');
         const progressContainer = document.getElementById('progress-container');
@@ -146,6 +152,7 @@
         
         let selectedFile = null;
         let worker = null;
+        let pastedJson = null;
         
         // File selection handlers
         dropArea.addEventListener('click', () => fileInput.click());
@@ -174,6 +181,27 @@
             }
         });
         
+        // Paste JSON handler
+        jsonText.addEventListener('input', () => {
+            const jsonTextValue = jsonText.value.trim();
+            if (jsonTextValue) {
+                try {
+                    pastedJson = JSON.parse(jsonTextValue);
+                    convertBtn.disabled = false;
+                    fileInfo.textContent = 'Pasted JSON data ready';
+                } catch (error) {
+                    convertBtn.disabled = true;
+                    fileInfo.textContent = 'Invalid JSON format';
+                }
+            } else {
+                pastedJson = null;
+                if (!selectedFile) {
+                    convertBtn.disabled = true;
+                    fileInfo.textContent = 'No file selected';
+                }
+            }
+        });
+        
         function handleFile(file) {
             if (file.type !== 'application/json' && !file.name.endsWith('.json')) {
                 alert('Please select a JSON file');
@@ -195,7 +223,7 @@
         convertBtn.addEventListener('click', startConversion);
         
         function startConversion() {
-            if (!selectedFile) return;
+            if (!selectedFile && !pastedJson) return;
             
             convertBtn.disabled = true;
             progressContainer.style.display = 'block';
@@ -211,11 +239,26 @@
                 flattenObjects: document.getElementById('flattenObjects').checked
             };
             
-            // Use web worker for large files to avoid UI freezing
-            if (selectedFile.size > 10 * 1024 * 1024) { // >10MB
+            // Use pasted JSON if available
+            if (pastedJson) {
+                convertPastedJson(pastedJson, options);
+            } else if (selectedFile.size > 10 * 1024 * 1024) { // >10MB
                 useWebWorker(selectedFile, options);
             } else {
                 convertDirectly(selectedFile, options);
+            }
+        }
+        
+        function convertPastedJson(jsonData, options) {
+            statusText.textContent = 'Converting pasted JSON to CSV...';
+            
+            try {
+                const csv = jsonToCsv(jsonData, options);
+                const csvBlob = new Blob([csv], {type: 'text/csv'});
+                showDownloadButton(csvBlob);
+            } catch (error) {
+                alert('Error: ' + error.message);
+                resetUI();
             }
         }
         
@@ -437,7 +480,7 @@
                 const url = URL.createObjectURL(csvBlob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = selectedFile.name.replace('.json', '.csv') || 'converted.csv';
+                a.download = pastedJson ? 'pasted_data.csv' : (selectedFile.name.replace('.json', '.csv') || 'converted.csv');
                 document.body.appendChild(a);
                 a.click();
                 document.body.removeChild(a);
